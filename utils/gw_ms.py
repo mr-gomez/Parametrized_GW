@@ -4,10 +4,10 @@
 
 import numpy as np
 from scipy.special import binom
-from scipy.spatial.distance import squareform
 from scipy.stats import entropy
 from scipy.optimize import minimize, Bounds
 
+from ot.gromov import gromov_wasserstein
 from ot.utils import list_to_array
 from ot.optim import cg, line_search_armijo, solve_1d_linesearch_quad
 from ot.lp import emd
@@ -16,18 +16,18 @@ from ot.backend import get_backend, NumpyBackend
 
 from ot.gromov._utils import init_matrix, gwloss, gwggrad
 
-from .utils import sq_idx_fun, sq_to_idx_fun
+from utils.utils import sq_idx_fun, sq_to_idx_fun, display_time
 
 from itertools import combinations, chain
-
-from warnings import warn
 
 # CHECK: Is this the correct machine epsilon or should we change it
 #        depending on np's data type?
 from sys import float_info
+
 epsilon_ = float_info.epsilon
 
 from time import time
+
 
 def gromov_wasserstein_ms(
     lC1,
@@ -254,6 +254,7 @@ def solve_gromov_linesearch_multiscale(
     # print()
 
     return alpha, 1, cost_G
+
 
 def cost_gw(G0, C1, C2, p=None, q=None, loss_fun="square_loss", nx=None):
     # Setup
@@ -1048,6 +1049,7 @@ def emd_batch(Ps, M_bat, **kwargs):
 
     return T_bat, logs
 
+
 def gw_ms_learn_nu(
     lCs,
     Ps=None,
@@ -1134,13 +1136,13 @@ def gw_ms_learn_nu(
             p = Ps[i]
             for j in range(i + 1, N):
                 q = Ps[j]
-                G0 = G0_bat_[i,j]
+                G0 = G0_bat_[i, j]
 
                 # Check marginals of G0 and save
                 # G0 = G0_bat_[i,j]
                 np.testing.assert_allclose(G0.sum(axis=1), p, atol=1e-08)
                 np.testing.assert_allclose(G0.sum(axis=0), q, atol=1e-08)
-                G0_bat[i,j] = G0
+                G0_bat[i, j] = G0
 
     # cg for GW is implemented using numpy on CPU
     np_ = NumpyBackend()
@@ -1282,7 +1284,7 @@ def gw_ms_learn_nu(
         else:
             # Compute gradient with KL regularization
             # grad_KL = 1 + np.log10(nu + epsilon_*(nu==0))
-            grad_KL = 1 + np.log10(nu + 1e-15*(nu==0))
+            grad_KL = 1 + np.log10(nu + 1e-15 * (nu == 0))
             # grad_KL = 1 + np.log10(nu + 1e-15)
             return J_comp.flatten() + reg * grad_KL
 
@@ -1354,18 +1356,18 @@ def gw_ms_learn_nu(
 
                 def df(G):
                     return dfs[i, j](G, nu)
-                
-                if verbose and it==1:
+
+                if verbose and it == 1:
                     time_start = time()
 
                 res_ij, log_ij = cg(
-                    Ps[i], # a
-                    Ps[j], # b
-                    0.0, # M
-                    1.0, # reg
-                    f, # f
-                    df, # df
-                    G0_bat[i, j], # G0
+                    Ps[i],  # a
+                    Ps[j],  # b
+                    0.0,  # M
+                    1.0,  # reg
+                    f,  # f
+                    df,  # df
+                    G0_bat[i, j],  # G0
                     line_searches[i, j],
                     log=True,
                     numItermax=numItermaxEmd,
@@ -1374,16 +1376,19 @@ def gw_ms_learn_nu(
                     **kwargs,
                 )
 
-                if verbose and it==1:
+                if verbose and it == 1:
                     time_end = time()
-                    print(f'Initial OT ({i+1},{j+1})/({N},{N}):', np.round(time_end-time_start,3))
+                    print(
+                        f"Initial OT ({i+1},{j+1})/({N},{N}):",
+                        np.round(time_end - time_start, 3),
+                    )
 
                 # Update couplings
                 T_ij = nx.from_numpy(res_ij, type_as=lCs[0])
                 G_bat[i, j] = T_ij
                 G_bat[j, i] = T_ij.T
-            
-            if verbose and it==1:
+
+            if verbose and it == 1:
                 print()
 
         # ----- Optimize nu with S -----
@@ -1399,11 +1404,11 @@ def gw_ms_learn_nu(
         rel_delta_score = abs_delta_score / score_inter if score_inter != 0 else np.nan
         if verbose:
             print(
-                    " ( T) {:5d}|{:15e}|{:15e}|{:15e}".format(
-                        it, score_inter, rel_delta_score, abs_delta_score
-                    )
+                " ( T) {:5d}|{:15e}|{:15e}|{:15e}".format(
+                    it, score_inter, rel_delta_score, abs_delta_score
                 )
-        
+            )
+
         # Debug
         score_list.append(score_inter)
         abs_delta_list.append(abs_delta_score)
@@ -1475,4 +1480,39 @@ def gw_ms_learn_nu(
     dMS_mat = nx.dot(ldMS_mat, nu)
     score = S(dMS_mat)
 
-    return dMS_mat, G_bat, nu, score, (score_list, abs_delta_list, rel_delta_list, nu_list)
+    return (
+        dMS_mat,
+        G_bat,
+        nu,
+        score,
+        (score_list, abs_delta_list, rel_delta_list, nu_list),
+    )
+
+
+# -------------------------------------
+# Computing GW between sets of pmnets
+# -------------------------------------
+# Given a set of pmnets lCs, compute the GW distance between the lCs at each time t
+def compute_dGWs(nSteps, lCs, verbose=1):
+    N = len(lCs)
+    dGWs = np.zeros((nSteps, N, N))
+    for t in range(nSteps):
+        for i in range(N):
+            for j in range(i + 1, N):
+                time_start = time()
+
+                T, log = gromov_wasserstein(lCs[i][t, :, :], lCs[j][t, :, :], log=True)
+                dGWs[t, i, j] = log["gw_dist"]
+
+                time_end = time()
+                if verbose:
+                    print(
+                        f"({t+1},{i+1},{j+1})/({nSteps},{N},{N}): "
+                        + display_time(seconds=time_end - time_start)
+                    )
+    print()
+
+    dGWs = np.maximum(dGWs, dGWs.transpose((0, 2, 1)))
+    dGWs = np.maximum(dGWs, 0)
+
+    return dGWs

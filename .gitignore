@@ -1,5 +1,6 @@
 figures/
 *.txt
+utils/old_*
 
 # ------------------------------
 # Python.gitignore template
