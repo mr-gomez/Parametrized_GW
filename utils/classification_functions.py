@@ -15,6 +15,34 @@ from sklearn.metrics import accuracy_score
 # -------------------------------------
 # Classification function and gradient
 def S_multi_class_fixed(Is, N, p=2):
+    """
+    Constructs functions for the classification score and its gradient.
+
+    The classification score of a distance matrix is the sum of
+    intra-class distances divided by the sum of all distances.
+    We optionally raise the distances to the p-th power.
+
+    Parameters
+    ----------
+    Is : list of array_like
+        Partition of range(N) into multiple classes.
+    N : int
+        Number of points. Included for redundancy.
+    p : float, optional
+        Exponent in score function (default is 2).
+
+    Returns
+    -------
+    S : callable
+        Computes the classification score of a distance matrix `D`.
+    dS : callable
+        Computes the gradient of the score with respect to `D`.
+
+    Raises
+    ------
+    ValueError
+        If `D` is not a 1D condensed or 2D square distance matrix.
+    """
     # Get intra-class indices in squareform
     pairs = []
     for I in Is:
@@ -59,13 +87,31 @@ def S_multi_class_fixed(Is, N, p=2):
     return S, dS
 
 
-# Returns a function that computes a classification score
-# given the distance matrix of a set with two classes.
-# Specifically, the score is the squared sum of interclass
-# distances divided by the squared sum of all distances
-# I = list with indices of first class
-# N = total number of points
 def S_two_class_generic(N):
+    """
+    Returns a functions for the classification score in a two-class problem.
+
+    The classification score of a distance matrix is the sum of
+    intra-class distances divided by the sum of all distances.
+
+    Parameters
+    ----------
+    N : int
+        Total number of data points.
+
+    Returns
+    -------
+    S : callable
+        Function that computes a classification score given:
+        - `D`: a distance matrix (square or condensed)
+        - `y`: class labels
+
+    Raises
+    ------
+    ValueError
+        If `D` is not a 1D condensed or 2D square distance matrix.
+    """
+
     def S(D, y):
         if D.ndim == 2:
             D = squareform(D)
@@ -86,8 +132,34 @@ def S_two_class_generic(N):
     return S
 
 
-# Classification function and gradient
 def S_two_class_fixed(I, N, p=2):
+    """
+    Constructs functions for the classification score and its gradient in a two-class problem.
+
+    The classification score of a distance matrix is the sum of
+    intra-class distances divided by the sum of all distances.
+    We optionally raise the distances to the p-th power.
+
+    This function is a wrapper for `S_multi_class_fixed` in a
+    binary classification. Computes the complement of `I` in
+    range(N) before calling `S_multi_class_fixed.
+
+    Parameters
+    ----------
+    I : array_like
+        Indices in range(N) that belong to the first class.
+    N : int
+        Total number of points.
+    p : float, optional
+        Exponent in score function (default is 2).
+
+    Returns
+    -------
+    S : callable
+        Computes the classification score of a distance matrix `D`.
+    dS : callable
+        Computes the gradient of the score with respect to `D`.
+    """
     # Complement class
     J = np.setdiff1d(range(N), I)
 
@@ -99,13 +171,32 @@ def S_two_class_fixed(I, N, p=2):
 # -------------------------------------
 # Generating classes of dynamic metric spaces
 # -------------------------------------
-def moving_point_grid(shape, dx, obstacle, nSteps):
+def moving_point_grid(shape, dx, nSteps, obstacle):
     """
-    shape: tuple of 2 integers with shape of robot grid
-    dx: float. Distance that robots move at each step
-    center: tuple with the center of the ellipse
-    radii:  tuple with the radii (x, y) of the ellipse
-    nSteps: number of steps robots take in the room
+    Generate a grid of moving points (e.g., drones) in a 2D environment.
+
+    Points move across a rectangular grid while avoiding a specified obstacle.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        Shape `(nx, ny)` of the grid of moving points.
+    dx : float
+        Distance that points move per time step.
+    nSteps : int
+        Number of movement steps.
+    obstacle : callable
+        Function that takes an array of x-coordinates and returns:
+        - `top`: array with the upper boundary of the obstacle at each x-coordinate
+        - `bot`: array with the lower boundary of the obstacle at each x-coordinate
+        - `I`: indices of points of `x` that are in the obstacle's domain
+        If x is not in the domain of the obstacle, or the obstacle is emtpy,
+        the upper boundary is -1 and the lower boundary is 1.
+
+    Returns
+    -------
+    P_seq : ndarray of shape (nSteps, nx*ny, 2)
+        Sequence of positions for all points at each step.
     """
     nx, ny = shape
 
@@ -121,16 +212,6 @@ def moving_point_grid(shape, dx, obstacle, nSteps):
     P = [v.flatten() for v in P]  # P has 2 arrays of shape (nx*ny,)
     P = np.array(P).T  # Shape [nx*ny,2]
 
-    # # Move drone grid across a room without obstacles
-    # # --------------------
-    # P_seq_1 = np.zeros((nSteps, nx*ny, 2))
-    # for idt in range(nSteps):
-    #     X = P[:,0] + dx*idt
-    #     Y = P[:,1]
-
-    #     P_seq_1[idt,:,0] = X
-    #     P_seq_1[idt,:,1] = Y
-
     # Move drone grid across a room with a circular obstacle
     # NOTE: If the I produced by obstacle is empty, we sample
     # as if there were no obstacle
@@ -138,8 +219,8 @@ def moving_point_grid(shape, dx, obstacle, nSteps):
     # Each page of the arrays below is in the same format as
     # the result of np.meshgrid.
     # Later we'll merge them as we did above
-    X_seq_2 = np.zeros((nSteps, nx, ny))
-    Y_seq_2 = np.zeros((nSteps, nx, ny))
+    X_seq = np.zeros((nSteps, nx, ny))
+    Y_seq = np.zeros((nSteps, nx, ny))
 
     # Top and half of the drones (0 is in the bottom half)
     J_bot = np.arange(ny / 2).astype(int)
@@ -151,7 +232,7 @@ def moving_point_grid(shape, dx, obstacle, nSteps):
 
         # Store X
         for idy in range(ny):
-            X_seq_2[:, idx, idy] = x_move
+            X_seq[:, idx, idy] = x_move
 
         # Find position of obstacle at all the x coordinates we visit
         top, bot, I = obstacle(x_move)
@@ -161,7 +242,7 @@ def moving_point_grid(shape, dx, obstacle, nSteps):
         for idt in range(nSteps):
             # No obstacle
             if idt not in I:
-                Y_seq_2[idt, idx, :] = yy
+                Y_seq[idt, idx, :] = yy
 
             # Obstacle present
             else:
@@ -177,23 +258,49 @@ def moving_point_grid(shape, dx, obstacle, nSteps):
                 else:
                     y_top = np.linspace(top[idt], 1, len(J_top))
 
-                Y_seq_2[idt, idx, J_top] = y_top
-                Y_seq_2[idt, idx, J_bot] = y_bot
+                Y_seq[idt, idx, J_top] = y_top
+                Y_seq[idt, idx, J_bot] = y_bot
 
     # At each step, gather x and y coordinates into a single array
-    P_seq_2 = np.zeros((nSteps, nx * ny, 2))
+    P_seq = np.zeros((nSteps, nx * ny, 2))
     for idt in range(nSteps):
         # We just transpose X and Y to have the exact same format as meshgrid
-        P_2 = [X_seq_2[idt, :, :].T, Y_seq_2[idt, :, :].T]
+        P_2 = [X_seq[idt, :, :].T, Y_seq[idt, :, :].T]
         P_2 = [v.flatten() for v in P_2]
 
-        P_seq_2[idt, :, 0] = P_2[0]
-        P_seq_2[idt, :, 1] = P_2[1]
+        P_seq[idt, :, 0] = P_2[0]
+        P_seq[idt, :, 1] = P_2[1]
 
-    return P_seq_2
+    return P_seq
 
 
 def add_noise_avoid_obstacle(P_seq, std, center, obstacle, rng=None):
+    """
+    Add Gaussian noise to a set of 2D points while avoiding an obstacle.
+
+    Parameters
+    ----------
+    P_seq : ndarray of shape (n_points, 2)
+        2D point positions.
+    std : float
+        Standard deviation of the Gaussian noise applied to each coordinate.
+    center : tuple of float or None
+        Center `(cx, cy)` of the obstacle.
+    obstacle : callable
+        Function that takes an array of x-coordinates and returns:
+        - `top`: array with the upper boundary of the obstacle at each x-coordinate
+        - `bot`: array with the lower boundary of the obstacle at each x-coordinate
+        - `I`: indices of points of `x` that are in the obstacle's domain
+        If x is not in the domain of the obstacle, or the obstacle is emtpy,
+        the upper boundary is -1 and the lower boundary is 1.
+    rng : int or numpy.random.Generator, optional
+        Random number generator or seed for reproducibility.
+
+    Returns
+    -------
+    P_seq_noise : ndarray
+        Noisy point sequence adjusted to remain outside the obstacle.
+    """
     if isinstance(rng, int):
         rng = np.random.default_rng(rng)
     elif rng is None:
@@ -224,7 +331,29 @@ def add_noise_avoid_obstacle(P_seq, std, center, obstacle, rng=None):
 
 
 def create_obstacle_fun(center, radii):
-    # If we have don't have center or radii, we return an empty obstacle
+    """
+    Construct a function that gives the position of an elliptical obstacle.
+
+    It is assumed that the y-coordinate of the obstacle lies within
+    the interval [-1,1].
+
+    Parameters
+    ----------
+    center : tuple of float or None
+        Center `(cx, cy)` of the ellipse. If None, returns an empty obstacle.
+    radii : tuple of float or None
+        Radii `(a, b)` of the ellipse. If None, returns an empty obstacle.
+
+    Returns
+    -------
+    obstacle : callable
+        Function that takes an array of x-coordinates and returns:
+        - `top`: array with the upper boundary of the obstacle at each x-coordinate
+        - `bot`: array with the lower boundary of the obstacle at each x-coordinate
+        - `I`: indices of points of `x` that are in the obstacle's domain
+        If x is not in the domain of the obstacle, or the obstacle is emtpy,
+        the upper boundary is -1 and the lower boundary is 1.
+    """
     if center is None or radii is None:
 
         def obstacle(x):
@@ -265,7 +394,54 @@ def create_obstacle_fun(center, radii):
 # Function to run several classification experiments
 # -------------------------------------
 def classification_experiment(n_neighbors, n_classes, dms_train, dms_test=None):
-    # If we don't have test data, we use the train data as test
+    """
+    Run K-nearest neighbors (KNN) classification experiments on pm-nets.
+
+    We train KNN with the following matrices:
+    - GW distance for each parameter t.
+    - Parametrized GW distance.
+    - Hard-vote ensemble using all GW distances
+    - Soft-vote ensemble using all GW distances
+
+    Parameters
+    ----------
+    n_neighbors : int
+        Number of neighbors used in the KNN classifier.
+    n_classes : int
+        Number of classes in the dataset.
+    dms_train : tuple
+        Training data containing
+        - `dGWs_train`: ndarray of shape (nSteps, n_train, n_train)
+            Each dGWs_train[t,:,:] is the GW distance matrix between the t-th
+            entry of each pm-net in the training set.
+        - `dMSs_train`: ndarray of shape (n_train, n_train)
+            Parametrized GW distance between the pm-nets in the training set
+        - `y_train`: array-like of shape (n_train,)
+            Class labels of the training set
+    dms_test : tuple, optional
+        If None, uses train data as test data.
+        Otherwise, it should contain:
+        - `dGWs_test`: ndarray of shape (nSteps, n_test, n_test)
+            Each dGWs_test[t,:,:] is the GW distance matrix between the t-th
+            entry of each pm-net in the test set.
+        - `dMSs_test`: ndarray of shape (n_test, n_test)
+            Parametrized GW distance between the pm-nets in the test set
+        - `y_test`: array-like of shape (n_test,)
+            Class labels of the test set
+
+    Returns
+    -------
+    pred_probs : ndarray of size (nSteps, n_test, n_classes)
+        Predicted class probabilities of the GW classifier for each parameter t.
+    accuracy : array of size (nSteps,)
+        Accuracy of the GW classifier for each parameter t.
+    accuracy_ms : float
+        Accuracy of the parametrized GW distance classifier.
+    accuracy_hard : float
+        Accuracy of the hard-voting GW ensemble.
+    accuracy_soft : float
+        Accuracy of the soft-voting GW ensemble.
+    """
     if dms_test is None:
         dms_test = dms_train
 
@@ -351,7 +527,34 @@ def classification_experiment(n_neighbors, n_classes, dms_train, dms_test=None):
 # Graphing functions
 # -------------------------------------
 def plot_drone_grid(P_seq, room_length, center, radii, plot_obstacle=False, seq_id=1):
-    # Functions to plot the obstacle
+    """
+    Plot multiple sets of 2D points (e.g. drones moving in space).
+
+    If we think that the points are drones moving in the plane, we plot
+    multiple snapshots of that movement.
+
+    Parameters
+    ----------
+    P_seq : ndarray
+        Sequence of drone positions with shape `(nSteps, n_points, 2)`.
+    room_length : float
+        Length of the room in the x-direction.
+    center : tuple of float
+        Center `(cx, cy)` of an elliptical obstacle.
+    radii : tuple of float
+        Radii `(a, b)` of an elliptical obstacle .
+    plot_obstacle : bool, optional
+        Whether to plot the obstacle as a red dotted line (default is False).
+    seq_id : int, optional
+        Index to include in plot titles (default is 1).
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure containing the subplots.
+    axes : ndarray of matplotlib.axes.Axes
+        Array of subplot axes for each time step.
+    """
     if plot_obstacle:
         cx, cy = center
         a, b = radii
@@ -382,6 +585,33 @@ def plot_drone_grid(P_seq, room_length, center, radii, plot_obstacle=False, seq_
 def plot_score_and_deltas(
     score_list, abs_delta_list, rel_delta_list, nu_list, plot_squares=True
 ):
+    """
+    Plot the evolution of classification scores, deltas, and learned parameters.
+
+    Parameters
+    ----------
+    score_list : list of float
+        Sequence of classification scores.
+    abs_delta_list : list of float
+        Absolute deltas in score changes.
+    rel_delta_list : list of float
+        Relative deltas in score changes.
+    nu_list : list of ndarray
+        List of weights in each iteration.
+    plot_squares : bool, optional
+        Plot `nu_list` using plt.imshow (True) or a line plot (False).
+
+    Returns
+    -------
+    fig1 : matplotlib.figure.Figure
+        Figure showing the score evolution.
+    axes1 : ndarray of matplotlib.axes.Axes
+        Axes for score-related plots.
+    fig2 : matplotlib.figure.Figure
+        Figure showing the evolution of `nu`.
+    axes2 : ndarray of matplotlib.axes.Axes
+        Axes for parameter plots.
+    """
     nu = nu_list[-1]
 
     # Part 1: Classification score and deltas
@@ -457,7 +687,33 @@ def plot_score_and_deltas(
 
 
 def MS_output(dGWs, dMSs, nu, nSteps, S, invariant_names):
-    # Part 1: Compare classification scores
+    """
+    Display classification scores and GW and parametrized GW distance matrices.
+
+    Parameters
+    ----------
+    dGWs : ndarray of shape (nSteps, n_points, n_points)
+        Sequence of GW distance matrices.
+    dMSs : ndarray of shape (n_points, n_points)
+        Parametrized GW distance matrix.
+    nu : ndarray of shape (nSteps,)
+        Weights used in the parametrized GW distance.
+    S : callable
+        Classification score function.
+    invariant_names : list of str
+        Name of each parameter used in the parametrized GW distance.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure containing the GW and MS matrix visualizations.
+    axes : ndarray of matplotlib.axes.Axes
+        Axes for each subplot.
+    im : matplotlib.image.AxesImage
+        Image handle for the final plotted matrix.
+    """
+    nSteps = len(nu)
+
     with np.printoptions(precision=3):
         for t in range(nSteps):
             print(invariant_names[t])
