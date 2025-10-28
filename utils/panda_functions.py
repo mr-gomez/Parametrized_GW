@@ -11,19 +11,61 @@ from pathlib import Path
 # -------------------------------------
 # Panda generators
 # -------------------------------------
-# Returns a list of lists, each inner list contains the vertices vertices onto
-# which we will paste the ears of the panda
-# The inner lists have length 1 if we paste over a vertex and length 2 if we paste
-# over an edge
 def paste_to_vertices(nh, ear_dist=1, paste_edge=False):
+    """
+    Determine indices of vertices used for attaching ears to a panda head.
+
+    Parameters
+    ----------
+    nh : int
+        Number of vertices in the head.
+    ear_dist : int, optional
+        Distance between the attachment points of the ears (default is 1).
+    paste_edge : bool, optional
+        If True, attach ears along an edge instead of a vertex.
+        (default is False).
+
+    Returns
+    -------
+    tuple of int
+        Indices ``(i1_1, i1_2, i2_1, i2_2)`` of the vertices where ears are
+        pasted. If we are pasting over vertices, ``i1_1==i1_2`` and
+        ``i2_1==i2_2``.
+    """
     if not paste_edge:
         return nh - 1 - ear_dist, nh - 1 - ear_dist, nh - 1, nh - 1
     else:
         return nh - 3 - ear_dist, nh - 2 - ear_dist, nh - 2, nh - 1
 
 
-# Construct dictionaries so that networkx pastes the panda ears to the head
 def ear_maps(nh, ne1, ne2, ear_dist=1, paste_edge=False):
+    """
+    Construct node mapping dictionaries for attaching ears to the panda head.
+
+    Returns two dictionaries ``map1`` and ``map2``, one for each ear. Each
+    ``map`` is a function from the labels of an ear to the labels of a panda
+    graph.
+
+    Parameters
+    ----------
+    nh : int
+        Number of vertices in the head.
+    ne1 : int
+        Number of vertices in the first ear.
+    ne2 : int
+        Number of vertices in the second ear.
+    ear_dist : int, optional
+        Distance between the attachment points of the ears (default is 1).
+    paste_edge : bool, optional
+        If True, attach ears along an edge instead of a vertex.
+        (default is False).
+
+    Returns
+    -------
+    map1, map2 : dict
+        Dictionaries mapping ear node indices to indices in
+        a panda graph.
+    """
     i1_1, i1_2, i2_1, i2_2 = paste_to_vertices(
         nh, ear_dist=ear_dist, paste_edge=paste_edge
     )
@@ -46,7 +88,6 @@ def ear_maps(nh, ne1, ne2, ear_dist=1, paste_edge=False):
     return map1, map2
 
 
-# Function to create a panda and split distance matrix
 def create_panda(
     nh,
     ne1,
@@ -59,8 +100,55 @@ def create_panda(
     seed=None,
     std=0,
 ):
-    if rng is None:
+    """
+    Create a panda graph composed of a head and two ears along with its distance matrices.
+
+    A panda graph is a cycle graph (the head) with two smaller cycles (the
+    ears) attached. This function constructs such a graph and computes its
+    shortest path distance matrix with small Gaussian noise. We also construct
+    a pm-net with three pseudo-distance matrices by zeroing out the distances
+    outside of the head and in each ear.
+
+    Note: We symmetrize and reset the diagonal to 0 after adding noise to the
+          distance matrix.
+
+    Parameters
+    ----------
+    nh : int
+        Number of vertices in the head.
+    ne1 : int
+        Number of vertices in the first ear.
+    ne2 : int
+        Number of vertices in the second ear.
+    ear_dist : int, optional
+        Distance between the attachment points of the ears (default is 1).
+    push_ears : bool, optional
+        If True, the indexing starts with the ears. Otherwise, the indexing starts with the head.
+    paste_edge : bool, optional
+        If True, attach ears along an edge instead of a vertex.
+        (default is False).
+    add_neighbors : bool, optional
+        If True, keeps neighbors of the wedge vertex when computing the pseudo-metrics.
+    rng : int or numpy.random.Generator, optional
+        Random number generator or seed for reproducibility.
+    std : float, optional
+        Standard deviation of Gaussian noise added to the distance matrix.
+
+    Returns
+    -------
+    N : int
+        Total number of vertices in the panda graph.
+    G : networkx.Graph
+        The panda graph.
+    dm : numpy.ndarray
+        Shortest path distance matrix with noise.
+    lC : list of numpy.ndarray
+        List of restrictions of the distance matrix to the head and each ear.
+    """
+    if isinstance(rng, int):
         rng = np.random.default_rng(seed)
+    elif rng is None:
+        rng = np.random.default_rng()
 
     # Head and ears
     H = nx.cycle_graph(nh)
@@ -133,9 +221,30 @@ def create_panda(
 # -------------------------------------
 # Finding position of panda vertices
 # -------------------------------------
-# Note: the function below needs (ear_dist is not None) if either i1_end
-# or i2_start is None
 def head_position(nh, R=1, ear_dist=1, i1_end=None, i2_start=None):
+    """
+    Arranges the nodes of the head of a panda in a circle.
+
+    Parameters
+    ----------
+    nh : int
+        Number of vertices in the head.
+    R : float, optional
+        Radius of the head (default is 1).
+    ear_dist : int, optional
+        Distance between the attachment points of the ears (default is 1).
+    i1_end : int, optional
+        Index of the last vertex of the first ear.
+    i2_start : int, optional
+        Index of the first vertex of the second ear.
+
+    Returns
+    -------
+    X_head : numpy.ndarray of shape ``(nh, 2)``
+        Coordinates of the head vertices.
+    tt : numpy.ndarray
+        Angular positions of vertices in radians.
+    """
     if i1_end is None or i2_start is None:
         i1_1, i1_2, i2_1, i2_2 = paste_to_vertices(
             nh, ear_dist=ear_dist, paste_edge=False
@@ -161,6 +270,34 @@ def head_position(nh, R=1, ear_dist=1, i1_end=None, i2_start=None):
 
 
 def ear_position(ne, X_head, tt, i1, i2=None, R=1, r=None, paste_edge=False):
+    """
+    Arranges the nodes of an ear of a panda in a circle.
+
+    Parameters
+    ----------
+    ne : int
+        Number of vertices in the ear.
+    X_head : numpy.ndarray
+        Coordinates of the head vertices.
+    tt : numpy.ndarray
+        Angular positions of head vertices.
+    i1 : int
+        Index of the vertex of the head where we attach the ear.
+    i2 : int, optional
+        Index of the second attachment vertex (if ear is pasted over an edge).
+    R : float, optional
+        Radius of the head (default is 1).
+    r : float, optional
+        Radius of the ear; if None, computed proportionally to head size.
+    paste_edge : bool, optional
+        If True, attach ears along an edge instead of a vertex.
+        (default is False).
+
+    Returns
+    -------
+    X_ear : numpy.ndarray of shape ``(ne, 2)``
+        Coordinates of the ear vertices.
+    """
     # Compute inner radius if not given
     if r is None:
         nh = X_head.shape[0]
@@ -196,6 +333,36 @@ def ear_position(ne, X_head, tt, i1, i2=None, R=1, r=None, paste_edge=False):
 def panda_position(
     nh, ne1, ne2, ear_dist=1, R=1, r1=None, r2=None, paste_edge=False, push_ears=False
 ):
+    """
+    Compute coordinates of a full panda graph.
+
+    Parameters
+    ----------
+    nh : int
+        Number of vertices in the head.
+    ne1 : int
+        Number of vertices in the first ear.
+    ne2 : int
+        Number of vertices in the second ear.
+    ear_dist : int, optional
+        Distance between the attachment points of the ears (default is 1).
+    R : float, optional
+        Radius of the head (default is 1).
+    r1 : float, optional
+        Radius of the first ear.
+    r2 : float, optional
+        Radius of the second ear.
+    paste_edge : bool, optional
+        If True, attach ears along an edge instead of a vertex.
+        (default is False).
+    push_ears : bool, optional
+        If True, reorder coordinate indices to move ears first.
+
+    Returns
+    -------
+    X_all : numpy.ndarray of shape ``(nh+ne1+ne2, 2)``
+        Coordinates for all nodes of a panda graph.
+    """
     # Ear-head mappings and indices of wedge points in the head
     map1, map2 = ear_maps(nh, ne1, ne2, ear_dist=ear_dist, paste_edge=paste_edge)
     i1_1, i1_2, i2_1, i2_2 = paste_to_vertices(
@@ -242,6 +409,27 @@ def panda_position(
 # Graphing pandas
 # -------------------------------------
 def display_ms_pandas(Pandas, Pandas_pos, dm_pandas, lCs_pandas):
+    """
+    Display pandas, their distance matrices, and pm-nets.
+
+    Parameters
+    ----------
+    Pandas : list of networkx.Graph
+        List of panda graphs.
+    Pandas_pos : list of numpy.ndarray
+        Coordinates for vertices of the pandas.
+    dm_pandas : list of numpy.ndarray
+        Distance matrices for each panda.
+    lCs_pandas : list of list of numpy.ndarray
+        pm-nets for each panda.
+
+    Returns
+    -------
+    figs : list of matplotlib.figure.Figure
+        Figures for the plots.
+    axes : list of list of matplotlib.axes.Axes
+        Axes corresponding to each subplot.
+    """
     nPandas = len(Pandas)
     nSteps = len(lCs_pandas[0])
 
@@ -263,6 +451,22 @@ def display_ms_pandas(Pandas, Pandas_pos, dm_pandas, lCs_pandas):
 
 
 def save_pandas(Pandas, Pandas_pos, dm_pandas, lCs_pandas, folder=""):
+    """
+    Save visualizations of pandas, distance matrices, and pm-nets.
+
+    Parameters
+    ----------
+    Pandas : list of networkx.Graph
+        List of panda graphs.
+    Pandas_pos : list of numpy.ndarray
+        Coordinates for vertices of the pandas.
+    dm_pandas : list of numpy.ndarray
+        Distance matrices for each panda.
+    lCs_pandas : list of list of numpy.ndarray
+        pm-nets for each panda.
+    folder : str or Path, optional
+        Directory to save the resulting figures (default is current folder).
+    """
     nPandas = len(Pandas)
     nSteps = len(lCs_pandas[0])
 
@@ -306,6 +510,28 @@ def save_pandas(Pandas, Pandas_pos, dm_pandas, lCs_pandas, folder=""):
 
 # Saving results
 def save_couplings(T_ms, Ts_gw, T_gw0, fs=3, folder=""):
+    """
+    Save visualizations of coupling matrices of GW and parametrized GW distances between pandas.
+
+    Parameters
+    ----------
+    T_ms : numpy.ndarray
+        Parametrized GW distance coupling.
+    Ts_gw : list of numpy.ndarray
+        List of GW couplings for each parameter.
+    T_gw0 : numpy.ndarray
+        One GW distance coupling (e.g. a baseline coupling).
+    fs : float, optional
+        Figure size scaling factor (default is 3).
+    folder : str or Path, optional
+        Directory to save the resulting figures (default is current folder).
+
+    Saves
+    -----
+    Panda_GWs.pdf : visualization of the GW coupling at each parameter.
+    Panda_MS.pdf : visualization of the pararametrized GW coupling.
+    Panda_GW0.pdf : visualization of the baseline GW coupling.
+    """
     nSteps = len(Ts_gw)
 
     vmin = 0
