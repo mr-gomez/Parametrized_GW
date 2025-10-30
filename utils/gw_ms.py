@@ -44,6 +44,102 @@ def gromov_wasserstein_ms(
     tol_abs=1e-9,
     **kwargs,
 ):
+    """
+    Compute the parametrized GW distance between two pm-nets over a common parameter space.
+
+    The function solves the following optimization problem using Conditional Gradient:
+
+    .. math::
+        \mathbf{T}^* \in \mathop{\arg \min}_\mathbf{T} \quad \sum_t \left(\sum_{i,j,k,l}
+        L(\mathbf{C_{1,t}}_{i,k}, \mathbf{C_{2,t}}_{j,l}) \mathbf{T}_{i,j} \mathbf{T}_{k,l} \right) \nu_t
+
+        s.t. \
+            \mathbf{T} \mathbf{1} &= \mathbf{p}
+
+            \mathbf{T}^T \mathbf{1} &= \mathbf{q}
+
+            \mathbf{T} &\geq 0
+
+    Where :
+    - :math:`\mathbf{C_{1,t}}`: Sequence of cost matrices in the source space
+    - :math:`\mathbf{C_{2,t}}`: Sequence of cost matrices in the target space
+    - :math:`\mathbf{p}`: distribution in the source space
+    - :math:`\mathbf{q}`: distribution in the target space
+    - `L`: loss function to account for the misfit between the similarity matrices
+
+    .. note:: This implementation is a generalization of ot.gromov.gromov_wasserstein
+              by Erwan Vautier,  Nicolas Courty, Rémi Flamary, Titouan Vayer,
+              and Cédric Vincent-Cuaz
+
+    Parameters
+    ----------
+    lC1 : list of arrays of shape (n,n) or array of shape (nSteps, n, n)
+        List of cost matrices in the source pm-net. Alternatively,
+        an ndarray where lC1[t,:,:] is a cost matrix for each t.
+    lC1 : list of arrays of shape (m,m) or array of shape (nSteps, m, m)
+        List of cost matrices in the target pm-net. Alternatively,
+        an ndarray where lC1[t,:,:] is a cost matrix for each t.
+    p : array-like, optional
+        Distribution in the source space.
+        If None, we use the uniform distribution on n points.
+    q : array-like, optional
+        Distribution in the target space.
+        If None, we use the uniform distribution on m points.
+    nu : array-like, optional
+        Distribution on the parameter space (weights over the list of cost matrices).
+        If None, we use the uniform distribution on nSteps points.
+    loss_fun : str, optional
+        loss function used for the solver either 'square_loss' or 'kl_loss'
+        NOTE: Only 'square_loss' is currently implemented.
+    symmetric : bool, optional
+        Assume lC1[t] and lC2[t] are all symmetric or not.
+        If symmetric is None, a symmetry test will be conducted.
+        Else if set to True (resp. False), each lC1[t] and lC2[t] will be assumed symmetric (resp. asymmetric).
+    log : bool, optional
+        record log if True. Default is False.
+    armijo : bool, optional
+        If True the step of the line-search is found via an armijo research. Else closed form is used.
+        If there are convergence issues use False. Default is False.
+        NOTE: armijo is currently not implmemented.
+    G0 : ndarray, optional
+        Initial transport plan of the solver. If None, we use pq^T.
+        Otherwise G0 must satisfy marginal constraints.
+    max_iter : int, optional
+        Max number of iterations. Default is 1e4.
+    tol_rel : float, optional
+        Stop threshold on relative error. Default is 1e-9.
+    tol_abs : float, optional
+        Stop threshold on absolute error. Default is 1e-9.
+    **kwargs : dict
+        parameters can be directly passed to the ot.optim.cg solver
+
+    Returns
+    -------
+    G : ndarray
+        Optimal coupling of shape (n, m).
+    log : dict, optional
+        Convergence information and loss.
+
+    Raises
+    ------
+    NotImplementedError
+        If loss_fun='kl_loss' or armijo=True (not yet supported).
+
+    References
+    ----------
+    .. Mario Gómez, Guanqun Ma, Tom Needham, and Bei Wang.
+        "Metrics for Parametric Families of Networks."
+        arxiv:2509.22549. 2025.
+
+    .. Gabriel Peyré, Marco Cuturi, and Justin Solomon,
+        "Gromov-Wasserstein averaging of kernel and distance matrices."
+        International Conference on Machine Learning (ICML). 2016.
+
+    .. Vayer Titouan, Chapel Laetitia, Flamary Rémi, Tavenard Romain
+        and Courty Nicolas "Optimal Transport for structured data with
+        application on graphs", International Conference on Machine Learning
+        (ICML). 2019.
+    """
     nSteps = len(lC1)
 
     # Make sure each matrix in the pm-nets is an array
@@ -294,6 +390,127 @@ def gw_ms_couple_nu(
     log=False,
     **kwargs,
 ):
+    """
+    Compute the parametrized GW distance between two pm-nets over different parameter spaces.
+
+    The function solves the two-variable optimization problem using an alternating
+    optimization and Conditional Gradient:
+
+    .. math::
+        \mathbf{T}^*, \mathbf{S}^* \in \mathop{\arg \min}_{\mathbf{T}, \mathbf{S}} \quad
+        \sum_{t,s} \left(\sum_{i,j,k,l} L(\mathbf{C_{1,t}}_{i,k}, \mathbf{C_{2,s}}_{j,l}) \mathbf{T}_{i,j} \mathbf{T}_{k,l} \right) \mathbf{S}_{t,s}
+
+        s.t. \
+            \mathbf{T} \mathbf{1} &= \mathbf{p}
+
+            \mathbf{T}^T \mathbf{1} &= \mathbf{q}
+
+            \mathbf{S} \mathbf{1} &= \mathbf{nu}_1
+
+            \mathbf{S}^T \mathbf{1} &= \mathbf{nu}_2
+
+            \mathbf{T} &\geq 0
+
+            \mathbf{S} &\geq 0
+
+    Where :
+    - :math:`(\mathbf{C_{1,t}})_t`: Sequence of cost matrices in the source space
+    - :math:`(\mathbf{C_{2,s}})_s`: Sequence of cost matrices in the target space
+    - :math:`\mathbf{p}`: distribution in the source space
+    - :math:`\mathbf{q}`: distribution in the target space
+    - :math:`\nu_1`: distribution in the source parameter space
+    - :math:`\nu_2`: distribution in the target parameter space
+    - `L`: loss function to account for the misfit between the similarity matrices
+
+    .. note:: This implementation is a generalization of ot.gromov.gromov_wasserstein
+              by Erwan Vautier,  Nicolas Courty, Rémi Flamary, Titouan Vayer,
+              and Cédric Vincent-Cuaz
+
+    Parameters
+    ----------
+    lC1 : list of arrays of shape (n1,n1) or array of shape (nSteps1, n1, n1)
+        List of cost matrices in the source pm-net. Alternatively,
+        an ndarray where lC1[t,:,:] is a cost matrix for each t.
+    lC1 : list of arrays of shape (n2,n2) or array of shape (nSteps2, n2, n2)
+        List of cost matrices in the target pm-net. Alternatively,
+        an ndarray where lC1[t,:,:] is a cost matrix for each t.
+    p : array-like, optional
+        Distribution in the source space.
+        If None, we use the uniform distribution on n1 points.
+    q : array-like, optional
+        Distribution in the target space.
+        If None, we use the uniform distribution on n2 points.
+    nu1 : array-like, optional
+        Distribution on the source parameter space (weights over the list of cost matrices).
+        If None, we use the uniform distribution on nSteps1 points.
+    nu2 : array-like, optional
+        Distribution on the target parameter space (weights over the list of cost matrices).
+        If None, we use the uniform distribution on nSteps2 points.
+    loss_fun : str, optional
+        loss function used for the solver either 'square_loss' or 'kl_loss'
+        NOTE: Only 'square_loss' is currently implemented.
+    symmetric : bool, optional
+        Assume lC1[t] and lC2[t] are all symmetric or not.
+        If symmetric is None, a symmetry test will be conducted.
+        Else if set to True (resp. False), each lC1[t] and lC2[t] will be assumed symmetric (resp. asymmetric).
+    armijo : bool, optional
+        If True the step of the line-search is found via an armijo research. Else closed form is used.
+        If there are convergence issues use False. Default is False.
+        NOTE: armijo is currently not implmemented.
+    E0 : ndarray, optional
+        Initial coupling between parameter spaces. If None, we use nu1*nu2^T.
+        Otherwise E0 must satisfy marginal constraints.
+    G0 : ndarray, optional
+        Initial transport plan of the solver. If None, we use p*q^T.
+        Otherwise G0 must satisfy marginal constraints.
+    max_iter : int, optional
+        Max number of iterations. Default is 1e4.
+    numItermaxEmd : int, optional
+        Max number of iterations in the internal call to emd. Default is 1e5.
+    tol_rel : float, optional
+        Stop threshold on relative error. Default is 1e-9.
+    tol_abs : float, optional
+        Stop threshold on absolute error. Default is 1e-9.
+    verbose : bool, optional
+        Print information along iterations
+    log : bool, optional
+        record log if True. Default is False.
+    **kwargs : dict
+        parameters can be directly passed to the ot.optim.cg solver
+
+    Returns
+    -------
+    E : ndarray of shape (nSteps1, nSteps2)
+        Optimal coupling between parameter spaces.
+    G : ndarray of shape (n1, n2)
+        Optimal coupling between pm-nets.
+    log : dict, optional
+        Convergence information and loss.
+    innerlog_1 : dict, optional
+        Convergence information and loss.
+    innerlog_2 : dict, optional
+        Convergence information and loss.
+
+    Raises
+    ------
+    NotImplementedError
+        If loss_fun='kl_loss' or armijo=True (not yet supported).
+
+    References
+    ----------
+    .. Mario Gómez, Guanqun Ma, Tom Needham, and Bei Wang.
+        "Metrics for Parametric Families of Networks."
+        arxiv:2509.22549. 2025.
+
+    .. Gabriel Peyré, Marco Cuturi, and Justin Solomon,
+        "Gromov-Wasserstein averaging of kernel and distance matrices."
+        International Conference on Machine Learning (ICML). 2016.
+
+    .. Vayer Titouan, Chapel Laetitia, Flamary Rémi, Tavenard Romain
+        and Courty Nicolas "Optimal Transport for structured data with
+        application on graphs", International Conference on Machine Learning
+        (ICML). 2019.
+    """
     nSteps1 = len(lC1)
     nSteps2 = len(lC2)
     n1 = lC1[0].shape[0]
@@ -615,7 +832,6 @@ def gw_ms_learn_nu(
     dS=None,  # Gradient of score
     lambda_S=1e-5,  # Regularization for KL divergence of nu
     loss_fun="square_loss",
-    option=1,
     symmetric=None,
     armijo=False,
     nu=None,
@@ -625,30 +841,122 @@ def gw_ms_learn_nu(
     tol_rel=1e-9,
     tol_abs=1e-9,
     verbose=False,
-    log=False,
     **kwargs,
 ):
+    """
+    Find the weights that minimize a function of the parametrized GW distance between a set of pm-nets.
+
+    This function computes the parametrized GW distance between a set of pm-nets,
+    and finds the weights on the common parameter space that minimize a provided
+    cost function. Explicitly, we find the matrix D of parametrized-GW
+    distance matrices and find the nu that minimizes a cost S(D, nu).
+
+    .. note:: This implementation is a generalization of ot.gromov.gromov_wasserstein
+              by Erwan Vautier,  Nicolas Courty, Rémi Flamary, Titouan Vayer,
+              and Cédric Vincent-Cuaz
+
+    Parameters
+    ----------
+    lCs : list of arrays of shape (nSteps, n_t, n_t)
+        List of pm-net represented by 3D arrays. Each array must have
+        shape (nSteps, n_t, n_t).
+    Ps : list of arrays of shape (n_t,)
+        List of distributions of the pm-nets. Length must be len(lCs).
+        If None, we use the uniform distributions on n_t, for every t.
+    S : callable
+        Cost function to minimize.
+        Must accept a square matrix of shape len(lCs) and return a float.
+    dS : callable
+        Gradient of the cost function.
+        Must accept a square matrix of shape len(lCs) and return an
+        array of the same shape.
+    lambda_S :
+        Regularization constant for the KL divergence of nu.
+        Default is 1e-5.
+    loss_fun : str, optional
+        loss function used for the solver either 'square_loss' or 'kl_loss'
+        NOTE: Only 'square_loss' is currently implemented.
+    symmetric : bool, optional
+        Assume each lCs[idx] is symmetric or not.
+        If symmetric is None, a symmetry test will be conducted.
+        Else if set to True (resp. False), each lCs[idx] will be assumed symmetric (resp. asymmetric).
+    armijo : bool, optional
+        If True the step of the line-search is found via an armijo research. Else closed form is used.
+        If there are convergence issues use False. Default is False.
+        NOTE: armijo is currently not implmemented.
+    nu : array of shape (len(lCs),), optional
+        Distribution on the parameter space (weights over the list of cost matrices).
+        If None, we use the uniform distribution on nSteps points.
+    E0 : array of shape (len(lCs), len(lCs)), optional
+        Initial coupling between parameter spaces. If None, we use nu1*nu2^T.
+        Otherwise E0 must satisfy marginal constraints.
+    G0_bat : array of shape (len(lCs), len(lCs))
+        Contains the initial transport plan for each pair of pm-nets.
+        If None, we use Ps[idx]*Ps[jdx].T.
+        Otherwise each G0_bat[idx,jdx] must have shape (len(lCs[idx]), len(lCs[jdx]))
+        and satisfy marginal constraints.
+    max_iter : int, optional
+        Max number of iterations. Default is 1e4.
+    numItermaxEmd : int, optional
+        Max number of iterations in the internal call to emd. Default is 1e5.
+    tol_rel : float, optional
+        Stop threshold on relative error. Default is 1e-9.
+    tol_abs : float, optional
+        Stop threshold on absolute error. Default is 1e-9.
+    verbose : bool, optional
+        Print information along iterations
+    **kwargs : dict
+        parameters can be directly passed to the ot.optim.cg solver
+
+    Returns
+    -------
+    dMS_mat : ndarray of shape (len(lCs), len(lCs))
+        Matrix with the parametrized GW distance between each pair of pm-nets
+    G_bat : ndarray of shape (len(lCs), len(lCs))
+        Array of optimal couplings for each pair of pm-nets
+    nu : array of shape (nSteps,)
+        Learned weights that minimize the score function S.
+    score : float
+        The minimum score found.
+    log : tuple
+        Convergence information and loss with the following variables:
+        score_list, abs_delta_list, rel_delta_list, nu_list.
+
+    Raises
+    ------
+    NotImplementedError
+        If loss_fun='kl_loss' or armijo=True (not yet supported).
+
+    References
+    ----------
+    .. Mario Gómez, Guanqun Ma, Tom Needham, and Bei Wang.
+        "Metrics for Parametric Families of Networks."
+        arxiv:2509.22549. 2025.
+
+    .. Gabriel Peyré, Marco Cuturi, and Justin Solomon,
+        "Gromov-Wasserstein averaging of kernel and distance matrices."
+        International Conference on Machine Learning (ICML). 2016.
+
+    .. Vayer Titouan, Chapel Laetitia, Flamary Rémi, Tavenard Romain
+        and Courty Nicolas "Optimal Transport for structured data with
+        application on graphs", International Conference on Machine Learning
+        (ICML). 2019.
+    """
     # NOTE:
     # option=0: Work with decoupled constants. Need to add them during runtime (slower)
     # option=1: Sum constants, return n*n array of constants (more memory)
+    option = 1
 
     # lCs is a list of multiscale networks of the same length
     N = len(lCs)
-    N_sq = int(binom(N, 2))
-
     nSteps = lCs[0].shape[0]
-
-    # Indexing functions
-    sq_idx = sq_idx_fun(N)
-    sq_to_idx = sq_to_idx_fun(N)
-
     arr = [*lCs]
 
     # ----------------
     # Default choices
     # ----------------
     if Ps is not None:
-        arr.extend([list_to_array(p) for p in Ps])
+        arr.extend(list_to_array(*Ps))
     else:
         Ps = [unif(lC.shape[1]) for lC in lCs]
     if nu is not None:
