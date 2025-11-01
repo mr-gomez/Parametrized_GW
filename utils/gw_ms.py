@@ -516,7 +516,9 @@ def gw_ms_couple_nu(
     n1 = lC1[0].shape[0]
     n2 = lC2[0].shape[0]
 
-    arr = [*lC1, *lC2]
+    lC1 = list_to_array(lC1)
+    lC2 = list_to_array(lC2)
+    arr = [lC1, lC2]
 
     # ----------------
     # Default choices
@@ -525,12 +527,10 @@ def gw_ms_couple_nu(
         arr.append(list_to_array(p))
     else:
         p = unif(lC1[0].shape[0])
-        # p = unif(lC1[0].shape[0], type_as=lC1[0])
     if q is not None:
         arr.append(list_to_array(q))
     else:
         q = unif(lC2[0].shape[0])
-        # q = unif(lC2[0].shape[0], type_as=lC2[0])
     if nu1 is not None:
         arr.append(nu1)
     else:
@@ -704,27 +704,44 @@ def gw_ms_couple_nu(
         it += 1
         old_cost_G = cost_G
 
-        # Calculate matrix of costs and gradients for the current G
+        # Calculate matrix of costs
         cost_mat = f_mat(G)
-        grad_mat = df_mat(G)
 
         # ----- Optimize E -----
         E, innerlog_1 = emd(nu1, nu2, cost_mat, numItermax=numItermaxEmd, log=True)
         # print(E)
         # print()
 
-        # Find cost and gradient for the new E and the old G
-        cost_G = f(E, cost_mat)
-        grad_G = df(E, grad_mat)
-
         # ----- Optimize G -----
-        # Find closest coupling to gradient
-        Gc, innerlog_2 = emd(p, q, grad_G, numItermax=numItermaxEmd, log=True)
-        deltaG = Gc - G
+        # Find cost and gradient with the new E and the old G
+        def f_E(G_E):
+            return f(E, f_mat(G_E))
 
-        # Solve exact line search problem
-        alpha, fc, cost_G = line_search(E, G, deltaG, cost_G)
-        G = G + alpha * deltaG
+        def df_E(G_E):
+            return df(E, df_mat(G_E))
+
+        def line_search_E(cost, G_E, deltaG_E, Mi, cost_G_E, **kwargs):
+            return line_search(E, G_E, deltaG_E, cost_G_E)
+
+        res, innerlog_2 = cg(
+            p,
+            q,
+            0.0,  # M
+            1.0,  # reg
+            f_E,  # f
+            df_E,  # df
+            G,  # G0
+            line_search_E,
+            log=True,
+            numItermax=numItermaxEmd,
+            stopThr=tol_rel,
+            stopThr2=tol_abs,
+            **kwargs,
+        )
+        G = nx.from_numpy(res, type_as=lC1[0])
+
+        # Recompute cost
+        cost_G = f_E(G)
 
         # ----- Test convergence -----
         if it >= max_iter:
@@ -763,9 +780,9 @@ def gw_ms_couple_nu(
     if log:
         # log.update(innerlog_1)
         # log.update(innerlog_2)
-        return E, G, log, innerlog_1, innerlog_2
+        return G, E, log, innerlog_1, innerlog_2
     else:
-        return E, G
+        return G, E
 
 
 def linesearch_multiscale_nu(

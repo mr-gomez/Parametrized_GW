@@ -3,9 +3,9 @@ from ot.gromov import gromov_wasserstein
 from ot.utils import list_to_array
 from ot.lp import emd
 from ot.utils import unif
-from ot.backend import get_backend, NumpyBackend
+from ot.backend import get_backend
 
-from ot.gromov._utils import init_matrix, gwloss, gwggrad
+from ot.gromov._utils import init_matrix, gwloss
 
 from utils.utils import display_time
 
@@ -54,8 +54,7 @@ def cost_ms(
     )
 
     # Compute gwloss for every parameter value
-    nSteps = len(lC1)
-    lS = np.array([gwloss(lconstC[i], lhC1[i], lhC2[i], G0, nx) for i in range(nSteps)])
+    lS = gwloss_list(lconstC, lhC1, lhC2, G0, nx=nx)
 
     # Return the parametrized GW cost
     if not all_steps:
@@ -63,6 +62,48 @@ def cost_ms(
     # Also return the cost at every parameter value
     else:
         return np.dot(nu, lS), lS
+
+
+# Computes multiscale cost of a coupling between two pm-nets
+def cost_ms_couple_nu(
+    G0,
+    E0,
+    lC1,
+    lC2,
+    p=None,
+    q=None,
+    loss_fun="square_loss",
+    nx=None,
+    all_steps=False,
+):
+    # Skipping other costs for now
+    if loss_fun != "square_loss":
+        raise NotImplementedError("Must use square_loss")
+
+    lC1 = list_to_array(lC1)
+    lC2 = list_to_array(lC2)
+    if nx is None:
+        nx = get_backend(lC1, lC2, p, q, G0, E0)
+
+    # Decompose matrices
+    lconstC, lhC1, lhC2 = init_matrix_list(
+        lC1, lC2, p, q, loss_fun=loss_fun, nx=nx, option=2
+    )
+
+    # Compute gwloss for every parameter value
+    nSteps1 = len(lC1)
+    nSteps2 = len(lC2)
+    lS = nx.zeros((nSteps1, nSteps2))
+    for i in range(nSteps1):
+        for j in range(nSteps2):
+            lS[i, j] = gwloss(lconstC[i, j], lhC1[i], lhC2[j], G0, nx)
+
+    # Return the parametrized GW cost
+    if not all_steps:
+        return np.sum(lS * E0)
+    # Also return the cost at every parameter value
+    else:
+        return np.sum(lS * E0), lS
 
 
 # Given a set of pmnets lCs, compute the GW distance between the lCs at each time t
@@ -120,6 +161,11 @@ def init_matrix_list(lC1, lC2, p, q, loss_fun="square_loss", nx=None, option=0):
     if option not in [0, 1, 2]:
         raise ValueError(f"option should be 0, 1 or 2. Got: {option}")
 
+    lC1 = list_to_array(lC1)
+    lC2 = list_to_array(lC2)
+    if nx is None:
+        nx = get_backend(lC1, lC2, p, q)
+
     # Decompose matrices, but constants are decoupled
     lfC1_bat, lfC2_bat, lhC1_bat, lhC2_bat = init_matrix_batch(
         [lC1, lC2], [p, q], loss_fun, nx, option=0
@@ -141,7 +187,6 @@ def init_matrix_list(lC1, lC2, p, q, loss_fun="square_loss", nx=None, option=0):
 def init_matrix_batch(lCs, Ps, loss_fun="square_loss", nx=None, option=0):
     # option=0: Return decoupled constants
     # option=1: Sum constants, return n*n array of constants
-
     # Throw error if incorrect option selected
     if option not in [0, 1]:
         raise ValueError(f"option should be 0 or 1. Got: {option}")
@@ -266,14 +311,15 @@ def gwggrad_list(lconstC, lhC1, lhC2, T, nx=None):
 
 
 def tensor_product_batch(lconstC_bat, lhC1_bat, lhC2_bat, T_bat, nx=None):
-    # Shape lconstC: (N,N)
-    # Shape lconstC[i,j]: (T,ni,nj)
+    # Shape lconstC_bat: (N,N)
+    # Shape lconstC_bat[i,j]: (T,ni,nj)
     # -------------------------------
-    # Shape lhC1, lhC2: (N,)
-    # Shape lhC1[i], lhC2[i]: (T, ni, ni)
+    # Shape lhC1_bat, lhC2_bat: (N,)
+    # Shape lhC1_bat[i]: (T, ni, ni)
+    # Shape lhC2_bat[j]: (T, nj, nj)
     # -------------------------------
-    # Shape Ts: (N,N)
-    # Shape Ts[i,j]: (ni, nj)
+    # Shape T_bat: (N,N)
+    # Shape T_bat[i,j]: (ni, nj)
 
     if nx is None:
         lconstC_bat, lhC1_bat, lhC2_bat, T_bat = list_to_array(
@@ -284,29 +330,48 @@ def tensor_product_batch(lconstC_bat, lhC1_bat, lhC2_bat, T_bat, nx=None):
     N = len(lhC1_bat)
     lA_bat = nx.zeros((N, N)).astype(object)
     for i in range(N):
-        # Shape: (T, n1, n1)
         lhC1 = lhC1_bat[i]
         for j in range(N):
-            # Shape: (T, n2, n2)
             lhC2 = lhC2_bat[j]
 
-            # Shape of result: (T, n1, n2)
+            # Shape lhC1_bat[i]: (T, ni, ni)
+            # Shape lhC2_bat[j]: (T, nj, nj)
+            # Shape T_bat[i,j]: (ni, nj)
+            # -------------------------------
+            # Shape lA_bat: (N,N)
+            # Shape lA_bat[i,j]: (T, ni, nj)
             lA_bat[i, j] = tensor_product_list(0, lhC1, lhC2, T_bat[i, j], nx=nx)
 
-    # Shape: (N,N)
-    # Shape of lTens_bat[i,j]: (T, ni, nj)
+    # Shape lA_bat: (N,N)
+    # Shape lA_bat[i,j]: (T, ni, nj)
+    # -------------------------------
+    # Shape lconstC_bat: (N,N)
+    # Shape lconstC_bat[i,j]: (T,ni,nj)
+    # -------------------------------
+    # Shape lTens_bat: (N,N)
+    # Shape lTens_bat[i,j]: (T, ni, nj)
     lTens_bat = lconstC_bat + lA_bat
     return lTens_bat
 
 
 def gwloss_batch(lconstC_bat, lhC1_bat, lhC2_bat, T_bat, nx=None):
-    # Shape: (N,N)
-    # Shape of lTens_bat[i,j]: (T, ni, nj)
-    lTens_bat = tensor_product_batch(lconstC_bat, lhC1_bat, lhC2_bat, T_bat, nx)
+    # Shape lconstC_bat: (N,N)
+    # Shape lconstC_bat[i,j]: (T,ni,nj)
+    # -------------------------------
+    # Shape lhC1_bat, lhC2_bat: (N,)
+    # Shape lhC1_bat[i]: (T, ni, ni)
+    # Shape lhC2_bat[j]: (T, nj, nj)
+    # -------------------------------
+    # Shape T_bat: (N,N)
+    # Shape T_bat[i,j]: (ni, nj)
 
     if nx is None:
         lTens_bat, T_bat = list_to_array(lTens_bat, T_bat)
         nx = get_backend(lTens_bat, T_bat)
+
+    # Shape lTens_bat: (N,N)
+    # Shape lTens_bat[i,j]: (T, ni, nj)
+    lTens_bat = tensor_product_batch(lconstC_bat, lhC1_bat, lhC2_bat, T_bat, nx)
 
     N = len(lhC1_bat)
     nSteps = len(lhC1_bat[0])

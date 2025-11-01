@@ -1,6 +1,7 @@
 figures/
 *.txt
 utils/old_*
+Testing_ot_utils.ipynb
 
 # ------------------------------
 # Python.gitignore template
