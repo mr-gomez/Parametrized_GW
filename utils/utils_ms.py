@@ -25,6 +25,11 @@ def cost_gw(G0, C1, C2, p=None, q=None, loss_fun="square_loss", nx=None):
     if loss_fun != "square_loss":
         raise NotImplementedError("Must use square_loss")
 
+    if p is None:
+        p = unif(C1.shape[0])
+    if q is None:
+        q = unif(C2.shape[0])
+
     # Initialize matrices
     constC, hC1, hC2 = init_matrix(C1, C2, p, q, loss_fun, nx=nx)
 
@@ -47,6 +52,13 @@ def cost_ms(
     # Skipping other costs for now
     if loss_fun != "square_loss":
         raise NotImplementedError("Must use square_loss")
+
+    if p is None:
+        p = unif(lC1[0].shape[0])
+    if q is None:
+        q = unif(lC2[0].shape[0])
+    if nu is None:
+        nu = unif(len(lC1))
 
     # Decompose matrices
     lconstC, lhC1, lhC2 = init_matrix_list(
