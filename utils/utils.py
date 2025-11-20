@@ -222,7 +222,7 @@ def sq_to_idx_fun(N):
     return sq_to_idx
 
 
-def pairs_to_sqform(N, I):
+def pairs_to_sqform(I, N):
     """
     Convert all pairs of indices from a list into squareform indices.
 
@@ -233,10 +233,10 @@ def pairs_to_sqform(N, I):
 
     Parameters
     ----------
-    N : int
-        Size of a square matrix condensed with squareform.
     I : array-like of int
         Subset of range(N). Indices to use for forming pairs.
+    N : int
+        Size of a square matrix condensed with squareform.
 
     Returns
     -------
@@ -286,8 +286,8 @@ def select_pairs(I, J):
     # (i,j) to squareform index
     sq_idx = sq_idx_fun(N)
 
-    pairs = pairs_to_sqform(N, I)
-    pairs.extend(pairs_to_sqform(N, J))
+    pairs = pairs_to_sqform(I, N)
+    pairs.extend(pairs_to_sqform(J, N))
 
     return pairs
 
